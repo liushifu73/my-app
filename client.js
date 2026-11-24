@@ -30,6 +30,17 @@ window.__ModuleLoader__.load({
       onlyStudied: '只看有档案',
       noMatch: '没有匹配的文献。',
       revealPaper: '点击在访达中显示这一篇',
+      tabLibrary: '文献库',
+      tabRefs: '参考文献',
+      pasteHint: '每行一条文献：粘 DOI、标题、或 AI 给的整行都行',
+      verify: '核实',
+      verifying: '核实中…',
+      copyAll: '复制全部',
+      copied: '已复制',
+      verifiedMark: '确认',
+      checkMark: '待核对',
+      notFoundMark: '未找到',
+      emptyRefs: '还没有结果。先把文献粘进上面的框，再点核实。',
     };
     const en = {
       button: 'Library',
@@ -53,6 +64,17 @@ window.__ModuleLoader__.load({
       onlyStudied: 'With study file',
       noMatch: 'No matching papers.',
       revealPaper: 'Click to reveal this paper in Finder',
+      tabLibrary: 'Library',
+      tabRefs: 'References',
+      pasteHint: 'One reference per line: DOI, title, or a whole pasted line',
+      verify: 'Verify',
+      verifying: 'Verifying…',
+      copyAll: 'Copy all',
+      copied: 'Copied',
+      verifiedMark: 'verified',
+      checkMark: 'check',
+      notFoundMark: 'not found',
+      emptyRefs: 'No results yet. Paste references above, then hit Verify.',
     };
 
     // 打开状态：侧栏按钮与浮层共享
@@ -133,6 +155,22 @@ window.__ModuleLoader__.load({
         border: '1px solid var(--dsw-alias-border-l1, #d0d7de)',
         color: 'var(--dsw-alias-label-secondary, #656d76)',
       },
+      area: {
+        width: '100%', minHeight: '96px', boxSizing: 'border-box', resize: 'vertical',
+        fontSize: '12px', lineHeight: 1.5, padding: '8px', borderRadius: '6px',
+        border: '1px solid var(--dsw-alias-border-l1, #d0d7de)',
+        background: 'var(--dsw-alias-bg-layer-2, #f6f8fa)',
+        color: 'var(--dsw-alias-label-primary, #24292f)',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      },
+      refRow: {
+        display: 'flex', gap: '8px', alignItems: 'flex-start', padding: '6px 8px',
+        borderRadius: '6px', cursor: 'pointer',
+        borderBottom: '1px solid var(--dsw-alias-border-l1, #d0d7de)',
+      },
+      markOk: { flex: '0 0 auto', fontSize: '11px', padding: '1px 7px', borderRadius: '999px', background: 'rgba(26,127,55,.14)', color: '#1a7f37' },
+      markWarn: { flex: '0 0 auto', fontSize: '11px', padding: '1px 7px', borderRadius: '999px', background: 'rgba(154,103,0,.16)', color: '#9a6700' },
+      markBad: { flex: '0 0 auto', fontSize: '11px', padding: '1px 7px', borderRadius: '999px', background: 'rgba(248,81,73,.14)', color: '#cf222e' },
       err: { color: 'var(--dsw-alias-state-error-primary, #f85149)', fontSize: '12px' },
       foot: { display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'flex-end' },
     };
@@ -142,6 +180,10 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState({ status: 'idle', data: null, error: null });
       const [query, setQuery] = useState('');
       const [filter, setFilter] = useState('all');
+      const [mode, setMode] = useState('library');
+      const [refsText, setRefsText] = useState('');
+      const [refs, setRefs] = useState({ status: 'idle', results: null, error: null });
+      const [copiedAt, setCopiedAt] = useState(0);
       const t = props.t;
 
       const load = useCallback(() => {
@@ -216,14 +258,78 @@ window.__ModuleLoader__.load({
           )));
       }
 
-      return h('div', {
-        style: S.backdrop,
-        onMouseDown: (e) => { if (e.target === e.currentTarget) setOpen(false); },
-      }, h('div', { style: S.card, role: 'dialog', 'aria-modal': 'true', 'aria-label': t('title') },
-        h('div', { style: S.head },
-          h('h2', { style: S.h }, t('title')),
-          h('button', { type: 'button', style: S.btn, onClick: load }, t('refresh')),
+      const runVerify = () => {
+        const lines = refsText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        if (!lines.length) return;
+        setRefs({ status: 'loading', results: null, error: null });
+        fetch('/my-app/refs/verify', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ refs: lines }),
+        })
+          .then((r) => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+          })
+          .then((d) => setRefs({ status: 'ready', results: d.results || [], error: null }))
+          .catch((e) => setRefs({ status: 'error', results: null, error: String(e && e.message ? e.message : e) }));
+      };
+
+      const copyText = (text) => {
+        try {
+          navigator.clipboard.writeText(text);
+          setCopiedAt(Date.now());
+        } catch (e) {
+          /* 剪贴板不可用就算了 */
+        }
+      };
+
+      const refsResults = refs.results || [];
+      const allFormatted = refsResults
+        .filter((r) => r.formatted)
+        .map((r, i) => `${i + 1}. ${r.formatted}`)
+        .join('\n');
+
+      const refsBody = h(React.Fragment, null,
+        h('textarea', {
+          style: S.area,
+          value: refsText,
+          placeholder: t('pasteHint'),
+          'aria-label': t('pasteHint'),
+          onChange: (e) => setRefsText(e.target.value),
+        }),
+        h('div', { style: S.controls },
+          h('button', { type: 'button', style: S.btn, onClick: runVerify, disabled: refs.status === 'loading' },
+            refs.status === 'loading' ? t('verifying') : t('verify')),
+          allFormatted ? h('button', { type: 'button', style: S.btn, onClick: () => copyText(allFormatted) }, t('copyAll')) : null,
+          copiedAt ? h('span', { style: S.meta }, t('copied')) : null,
         ),
+        refs.status === 'error' ? h('div', { style: S.err }, `${t('failed')}：${refs.error}`) : null,
+        refs.status === 'ready' && refsResults.length === 0 ? h('div', { style: S.meta }, t('emptyRefs')) : null,
+        refsResults.map((r, i) => {
+          const mark = r.status === 'verified' ? [S.markOk, t('verifiedMark')]
+            : r.status === 'check' ? [S.markWarn, t('checkMark')]
+              : [S.markBad, t('notFoundMark')];
+          const text = r.formatted || r.input;
+          return h('div', {
+            key: String(i) + text.slice(0, 24),
+            style: S.refRow,
+            title: r.match && r.match.doi ? 'DOI: ' + r.match.doi : '',
+            onClick: () => copyText(text),
+          },
+            h('span', { style: mark[0] }, mark[1]),
+            h('span', { style: S.name, whiteSpace: 'normal' }, text));
+        }),
+      );
+
+      const tabButton = (id, label) => h('button', {
+        type: 'button',
+        style: mode === id ? S.chipOn : S.chip,
+        onClick: () => setMode(id),
+      }, label);
+
+      const libraryBody = h(React.Fragment, null,
         data
           ? h('p', { style: S.meta },
               `${data.totals.topics} ${t('topics')} · ${data.totals.papers} ${t('papers')} · ${data.totals.transcribed} ${t('done')}\n${data.dataDir}`)
@@ -241,8 +347,24 @@ window.__ModuleLoader__.load({
             )
           : null,
         body,
+      );
+
+      return h('div', {
+        style: S.backdrop,
+        onMouseDown: (e) => { if (e.target === e.currentTarget) setOpen(false); },
+      }, h('div', { style: S.card, role: 'dialog', 'aria-modal': 'true', 'aria-label': t('title') },
+        h('div', { style: S.head },
+          h('h2', { style: S.h }, mode === 'refs' ? t('tabRefs') : t('title')),
+          h('button', { type: 'button', style: S.btn, onClick: mode === 'refs' ? runVerify : load },
+            mode === 'refs' ? t('verify') : t('refresh')),
+        ),
+        h('div', { style: S.controls },
+          tabButton('library', t('tabLibrary')),
+          tabButton('refs', t('tabRefs')),
+        ),
+        mode === 'refs' ? refsBody : libraryBody,
         h('div', { style: S.foot },
-          data ? h('button', { type: 'button', style: S.btn, onClick: () => reveal('', '') }, t('reveal')) : null,
+          mode === 'library' && data ? h('button', { type: 'button', style: S.btn, onClick: () => reveal('', '') }, t('reveal')) : null,
           h('button', { type: 'button', style: S.btn, onClick: () => setOpen(false) }, t('close')),
         ),
       ));

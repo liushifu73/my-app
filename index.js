@@ -4,11 +4,12 @@ import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
+import { verifyRefs, toGost } from './refs.js';
 
 export const name = 'my-app';
 export const inject = ['tools'];
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 /** 文献库根目录：配置优先，其次 DSH_PAPER_DATA_DIR，最后 ~/.dsh-paper-reader/data。 */
 function resolveDataDir(config = {}) {
@@ -112,6 +113,49 @@ const libraryOutputSchema = {
   additionalProperties: false,
 };
 
+
+const refsOutputSchema = {
+  type: 'object',
+  properties: {
+    results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          input: { type: 'string' },
+          status: { type: 'string' },
+          score: { type: 'number' },
+          formatted: { type: 'string' },
+        },
+        required: ['input', 'status', 'score', 'formatted'],
+        additionalProperties: true,
+      },
+    },
+    counts: {
+      type: 'object',
+      properties: {
+        verified: { type: 'number' },
+        check: { type: 'number' },
+        notFound: { type: 'number' },
+      },
+      required: ['verified', 'check', 'notFound'],
+      additionalProperties: false,
+    },
+  },
+  required: ['results', 'counts'],
+  additionalProperties: false,
+};
+
+function summarizeRefs(value) {
+  const c = value.counts;
+  const lines = [`核实 ${value.results.length} 条：确认 ${c.verified}，待核对 ${c.check}，未找到 ${c.notFound}。`];
+  value.results.forEach((r, i) => {
+    const mark = r.status === 'verified' ? '✓' : r.status === 'check' ? '?' : '✗';
+    lines.push(`${i + 1}. ${mark} ${r.formatted || r.input}`);
+  });
+  return lines.join('\n');
+}
+
 function summarize(value) {
   if (!value.readable) return `文献库不可读：${value.dataDir}`;
   const t = value.totals;
@@ -138,6 +182,34 @@ export function apply(ctx, config = {}) {
       render: (_args, value) => [{ type: 'text', text: summarize(value) }],
     },
     execute: async () => scanLibrary(dataDir),
+  });
+
+
+  ctx.tools.register({
+    name: 'my_app_refs',
+    description: '核实一批参考文献是否真实存在（查 Crossref 与 arXiv），并按俄文期刊惯例给出规范化的完整条目。',
+    parameters: {
+      type: 'object',
+      properties: {
+        refs: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['refs'],
+      additionalProperties: false,
+    },
+    output: {
+      schema: refsOutputSchema,
+      render: (_args, value) => [{ type: 'text', text: summarizeRefs(value) }],
+    },
+    execute: async ({ refs }) => {
+      const results = await verifyRefs(refs);
+      const counts = { verified: 0, check: 0, notFound: 0 };
+      for (const r of results) {
+        if (r.status === 'verified') counts.verified += 1;
+        else if (r.status === 'check') counts.check += 1;
+        else counts.notFound += 1;
+      }
+      return { results, counts };
+    },
   });
 
   // web profile 才有 webServer / connection；headless 下这段不执行，插件仍然可用。
@@ -198,6 +270,33 @@ export function apply(ctx, config = {}) {
               if (err) sendJson(res, 500, { error: 'open failed' });
               else sendJson(res, 200, { ok: true, path: target });
             });
+          });
+          return;
+        }
+
+        if (url.pathname === '/my-app/refs/verify' && req.method === 'POST') {
+          let body = '';
+          req.on('data', (chunk) => {
+            body += chunk;
+            if (body.length > 64 * 1024) req.destroy();
+          });
+          req.on('end', () => {
+            let refs = [];
+            try {
+              const parsed = JSON.parse(body || '{}');
+              refs = Array.isArray(parsed.refs) ? parsed.refs.map((r) => String(r ?? '')) : [];
+            } catch {
+              sendJson(res, 400, { error: 'bad json' });
+              return;
+            }
+            if (!refs.length) {
+              sendJson(res, 400, { error: 'no refs' });
+              return;
+            }
+            verifyRefs(refs).then(
+              (results) => sendJson(res, 200, { results }),
+              (err) => sendJson(res, 500, { error: String(err?.message ?? err) }),
+            );
           });
           return;
         }
