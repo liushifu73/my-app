@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process';
 export const name = 'my-app';
 export const inject = ['tools'];
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 
 /** 文献库根目录：配置优先，其次 DSH_PAPER_DATA_DIR，最后 ~/.dsh-paper-reader/data。 */
 function resolveDataDir(config = {}) {
@@ -173,17 +173,28 @@ export function apply(ctx, config = {}) {
           });
           req.on('end', () => {
             let topic = '';
+            let paper = '';
             try {
-              topic = String(JSON.parse(body || '{}').topic ?? '');
+              const parsed = JSON.parse(body || '{}');
+              topic = String(parsed.topic ?? '');
+              paper = String(parsed.name ?? '');
             } catch {
               /* 空请求体 = 打开根目录 */
             }
-            if (topic.includes('/') || topic.includes('\\') || topic.includes('..')) {
-              sendJson(res, 400, { error: 'bad topic' });
+            // 只接受单层名字：挡掉路径分隔符与 ..
+            const unsafe = (v) => v.includes('/') || v.includes('\\') || v.includes('..');
+            if (unsafe(topic) || unsafe(paper)) {
+              sendJson(res, 400, { error: 'bad name' });
               return;
             }
-            const target = topic ? join(dataDir, topic) : dataDir;
-            execFile('open', [target], (err) => {
+            const target = paper
+              ? join(dataDir, topic, `${paper}.pdf`)
+              : topic
+                ? join(dataDir, topic)
+                : dataDir;
+            // 有具体文献就 -R 在访达里选中它，否则打开目录
+            const args = paper ? ['-R', target] : [target];
+            execFile('open', args, (err) => {
               if (err) sendJson(res, 500, { error: 'open failed' });
               else sendJson(res, 200, { ok: true, path: target });
             });

@@ -1,4 +1,4 @@
-// my-app —— Web 端：侧栏底部一个「文献库」按钮 + 整页浮层面板。
+// my-app —— Web 端：侧栏底部「文献库」按钮 + 整页浮层面板（搜索、筛选、定位）。
 // 数据走宿主路由 GET /my-app/library，和 my_app_library 工具同一份扫描逻辑。
 window.__ModuleLoader__.load({
   id: '@local/my-app',
@@ -24,6 +24,12 @@ window.__ModuleLoader__.load({
       topics: '专题',
       papers: '文献',
       done: '已转录',
+      search: '搜索文献名…',
+      all: '全部',
+      onlyPending: '只看待转录',
+      onlyStudied: '只看有档案',
+      noMatch: '没有匹配的文献。',
+      revealPaper: '点击在访达中显示这一篇',
     };
     const en = {
       button: 'Library',
@@ -41,6 +47,12 @@ window.__ModuleLoader__.load({
       topics: 'topics',
       papers: 'papers',
       done: 'transcribed',
+      search: 'Search papers…',
+      all: 'All',
+      onlyPending: 'Not transcribed',
+      onlyStudied: 'With study file',
+      noMatch: 'No matching papers.',
+      revealPaper: 'Click to reveal this paper in Finder',
     };
 
     // 打开状态：侧栏按钮与浮层共享
@@ -68,7 +80,7 @@ window.__ModuleLoader__.load({
         background: 'rgba(0,0,0,.38)', padding: '24px', boxSizing: 'border-box',
       },
       card: {
-        width: 'min(760px, 94vw)', maxHeight: '82vh', overflow: 'auto',
+        width: 'min(780px, 94vw)', maxHeight: '82vh', overflow: 'auto',
         background: 'var(--dsw-alias-bg-layer-1, #fff)',
         color: 'var(--dsw-alias-label-primary, #24292f)',
         border: '1px solid var(--dsw-alias-border-l1, #d0d7de)',
@@ -78,25 +90,45 @@ window.__ModuleLoader__.load({
       },
       head: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' },
       h: { fontSize: '15px', fontWeight: 600, margin: 0, flex: 1 },
-      meta: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #656d76)', wordBreak: 'break-all', margin: '0 0 12px' },
+      meta: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #656d76)', wordBreak: 'break-all', margin: '0 0 12px', whiteSpace: 'pre-line' },
       btn: {
         fontSize: '12px', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer',
         border: '1px solid var(--dsw-alias-border-l1, #d0d7de)', background: 'none',
         color: 'var(--dsw-alias-label-secondary, #656d76)',
       },
+      controls: { display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 8px', flexWrap: 'wrap' },
+      input: {
+        flex: '1 1 200px', minWidth: '160px', boxSizing: 'border-box', fontSize: '12px',
+        padding: '6px 8px', borderRadius: '6px',
+        border: '1px solid var(--dsw-alias-border-l1, #d0d7de)',
+        background: 'var(--dsw-alias-bg-layer-2, #f6f8fa)',
+        color: 'var(--dsw-alias-label-primary, #24292f)',
+      },
+      chip: {
+        fontSize: '12px', padding: '4px 10px', borderRadius: '999px', cursor: 'pointer',
+        border: '1px solid var(--dsw-alias-border-l1, #d0d7de)', background: 'none',
+        color: 'var(--dsw-alias-label-secondary, #656d76)',
+      },
+      chipOn: {
+        fontSize: '12px', padding: '4px 10px', borderRadius: '999px', cursor: 'pointer',
+        border: '1px solid transparent',
+        background: 'var(--dsw-alias-interactive-bg-active, rgba(9,105,218,.12))',
+        color: 'var(--dsw-alias-label-primary, #24292f)', fontWeight: 600,
+      },
       topic: { marginTop: '14px' },
       topicName: { fontSize: '13px', fontWeight: 600, margin: '0 0 6px' },
       row: {
         display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px',
-        borderRadius: '6px', borderBottom: '1px solid var(--dsw-alias-border-l1, #d0d7de)',
+        borderRadius: '6px', cursor: 'pointer',
+        borderBottom: '1px solid var(--dsw-alias-border-l1, #d0d7de)',
       },
       name: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-      chipOn: {
+      chipOnSmall: {
         fontSize: '11px', padding: '1px 7px', borderRadius: '999px',
         background: 'var(--dsw-alias-interactive-bg-active, rgba(9,105,218,.12))',
         color: 'var(--dsw-alias-label-primary, #24292f)',
       },
-      chipOff: {
+      chipOffSmall: {
         fontSize: '11px', padding: '1px 7px', borderRadius: '999px',
         border: '1px solid var(--dsw-alias-border-l1, #d0d7de)',
         color: 'var(--dsw-alias-label-secondary, #656d76)',
@@ -108,6 +140,8 @@ window.__ModuleLoader__.load({
     function LibraryPanel(props) {
       const open = useOpen();
       const [state, setState] = useState({ status: 'idle', data: null, error: null });
+      const [query, setQuery] = useState('');
+      const [filter, setFilter] = useState('all');
       const t = props.t;
 
       const load = useCallback(() => {
@@ -134,33 +168,51 @@ window.__ModuleLoader__.load({
 
       if (!open) return null;
 
-      const reveal = (topic) => {
+      const reveal = (topic, paper) => {
         fetch('/my-app/reveal', {
           method: 'POST',
           credentials: 'include',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ topic: topic || '' }),
+          body: JSON.stringify({ topic: topic || '', name: paper || '' }),
         }).catch(() => {});
       };
 
       const data = state.data;
+      const needle = query.trim().toLowerCase();
+      let shown = [];
+      if (data && Array.isArray(data.topics)) {
+        for (const topic of data.topics) {
+          const papers = topic.papers.filter((paper) => {
+            if (needle && !paper.name.toLowerCase().includes(needle)) return false;
+            if (filter === 'pending' && paper.transcribed) return false;
+            if (filter === 'studied' && !paper.studied) return false;
+            return true;
+          });
+          if (papers.length > 0) shown.push({ name: topic.name, papers });
+        }
+      }
+
       let body;
       if (state.status === 'loading') body = h('div', { style: S.meta }, t('loading'));
       else if (state.status === 'error') body = h('div', { style: S.err }, `${t('failed')}：${state.error}`);
       else if (!data || !data.readable) body = h('div', { style: S.meta }, t('unreadable'));
       else if (data.topics.length === 0) body = h('div', { style: S.meta }, t('empty'));
+      else if (shown.length === 0) body = h('div', { style: S.meta }, t('noMatch'));
       else {
-        body = h(React.Fragment, null, data.topics.map((topic) =>
+        body = h(React.Fragment, null, shown.map((topic) =>
           h('div', { key: topic.name, style: S.topic },
             h('div', { style: S.topicName }, `${topic.name}（${topic.papers.length}）`),
-            topic.papers.length === 0
-              ? h('div', { style: S.meta }, t('empty'))
-              : topic.papers.map((paper) =>
-                  h('div', { key: paper.name, style: S.row },
-                    h('span', { style: S.name, title: paper.name }, paper.name),
-                    h('span', { style: paper.transcribed ? S.chipOn : S.chipOff }, paper.transcribed ? t('transcribed') : t('pending')),
-                    paper.studied ? h('span', { style: S.chipOn }, t('studied')) : null,
-                  )),
+            topic.papers.map((paper) =>
+              h('div', {
+                key: paper.name,
+                style: S.row,
+                title: t('revealPaper'),
+                onClick: () => reveal(topic.name, paper.name),
+              },
+                h('span', { style: S.name }, paper.name),
+                h('span', { style: paper.transcribed ? S.chipOnSmall : S.chipOffSmall }, paper.transcribed ? t('transcribed') : t('pending')),
+                paper.studied ? h('span', { style: S.chipOnSmall }, t('studied')) : null,
+              )),
           )));
       }
 
@@ -176,9 +228,21 @@ window.__ModuleLoader__.load({
           ? h('p', { style: S.meta },
               `${data.totals.topics} ${t('topics')} · ${data.totals.papers} ${t('papers')} · ${data.totals.transcribed} ${t('done')}\n${data.dataDir}`)
           : null,
+        data && data.readable && data.topics.length > 0
+          ? h('div', { style: S.controls },
+              h('input', {
+                style: S.input, type: 'search', value: query,
+                placeholder: t('search'), 'aria-label': t('search'),
+                onChange: (e) => setQuery(e.target.value),
+              }),
+              h('button', { type: 'button', style: filter === 'all' ? S.chipOn : S.chip, onClick: () => setFilter('all') }, t('all')),
+              h('button', { type: 'button', style: filter === 'pending' ? S.chipOn : S.chip, onClick: () => setFilter('pending') }, t('onlyPending')),
+              h('button', { type: 'button', style: filter === 'studied' ? S.chipOn : S.chip, onClick: () => setFilter('studied') }, t('onlyStudied')),
+            )
+          : null,
         body,
         h('div', { style: S.foot },
-          data ? h('button', { type: 'button', style: S.btn, onClick: () => reveal('') }, t('reveal')) : null,
+          data ? h('button', { type: 'button', style: S.btn, onClick: () => reveal('', '') }, t('reveal')) : null,
           h('button', { type: 'button', style: S.btn, onClick: () => setOpen(false) }, t('close')),
         ),
       ));
