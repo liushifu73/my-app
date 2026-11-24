@@ -1,0 +1,3 @@
+- insert:
+    - id: my-app
+      name: '@local/my-app'

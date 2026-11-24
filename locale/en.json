@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "My app",
+    "description": "Minimal DSH plugin scaffold: registers one demo tool and shows how tools, locale files, and an icon are packaged.",
+    "detail": "docs/DETAIL.md"
+  }
+}
