@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "My app",
-    "description": "Minimal DSH plugin scaffold: registers one demo tool and shows how tools, locale files, and an icon are packaged.",
+    "description": "Adds a Library button to the sidebar footer that opens a panel listing the paper library by topic, marking which papers are transcribed or have study files.",
     "detail": "docs/DETAIL.md"
   }
 }
